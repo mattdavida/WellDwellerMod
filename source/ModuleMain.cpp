@@ -637,7 +637,8 @@ static bool FindMapDraw(double& out)
 	return true;
 }
 
-// Entering a room changes that cell from 1 to 2. 1 is the fog still on the map.
+// Entering a room changes that cell from 1 to 2. A new save leaves the rest at 0,
+// and those are the blank spaces. Both need to become 2.
 static void RevealGrid(RValue& grid, int depth)
 {
 	if (g_ModuleInterface == nullptr || grid.m_Kind != VALUE_ARRAY || depth > 2)
@@ -652,7 +653,7 @@ static void RevealGrid(RValue& grid, int depth)
 			continue;
 		if (entry->m_Kind == VALUE_ARRAY)
 			RevealGrid(*entry, depth + 1);
-		else if (IsNumber(entry) && NumberOf(entry) == 1.0)
+		else if (IsNumber(entry) && NumberOf(entry) <= 1.0)
 			SetNumber(entry, 2.0);
 	}
 }
@@ -674,7 +675,7 @@ static void CountGrid(RValue& grid, int depth, size_t& revealed, size_t& total)
 		else if (IsNumber(entry))
 		{
 			const double number = NumberOf(entry);
-			if (number == 1.0 || number == 2.0)
+			if (number >= 0.0 && number <= 2.0)
 				++total;
 			if (number == 2.0)
 				++revealed;
@@ -687,7 +688,7 @@ static std::string RevealedString(const char* text)
 	std::string copy = text != nullptr ? text : "";
 	for (char& cell : copy)
 	{
-		if (cell == '1')
+		if (cell == '0' || cell == '1')
 			cell = '2';
 	}
 	return copy;

@@ -16,7 +16,7 @@ It is meant for playing on hard without the stops: health, stamina, hover, bubbl
 - **Free Trinket Costs.** Trinkets you have already found cost 0 points to equip. You still find them yourself. Turn it off to get the normal costs back.
 - **Add 5000 Currency.** Adds 5000 of the white-diamond shop currency.
 - **Unlock All Trinkets.** Asks you to confirm. Unlocks every missing trinket. Trinkets you already upgraded stay at that level.
-- **Unlock Entire Map.** Asks you to confirm. Open the map first. Fogged rooms are marked explored, and rooms you have already explored stay as they are. Save in the game if you want it to stay after you leave.
+- **Unlock Entire Map.** Asks you to confirm. Open the map first. Blank and fogged rooms are marked explored, and rooms you have already explored stay as they are. Save in the game if you want it to stay after you leave.
 
 Toggles are saved in `well-mod/config.json`, next to `WellDweller.exe`. That file appears the first time you change a toggle. It is local and is not part of this repo.
 
