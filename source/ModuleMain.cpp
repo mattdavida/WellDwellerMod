@@ -16,6 +16,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <string>
 #include <vector>
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
@@ -130,6 +131,8 @@ static bool g_ConfigWritable = true;
 static int g_FlyBindKind = 0;
 static int g_FlyBindCode = 0;
 static bool g_FlyBindListening = false;
+static bool g_ConfirmUnlock = false;
+static bool g_ConfirmMap = false;
 
 static bool ConfigPath(wchar_t* path, size_t count)
 {
@@ -559,6 +562,182 @@ static void AddCurrency(double amount)
 	WriteGlobalReal("currency", current + amount);
 }
 
+// Owned trinkets are upgrade_list_binary. 0 is missing. 1 and up is the
+// upgrade level, so a found trinket stays at whatever level it already has.
+static bool TrinketProgress(size_t& owned, size_t& total)
+{
+	owned = 0;
+	total = 0;
+	if (g_ModuleInterface == nullptr)
+		return false;
+	RValue list = g_ModuleInterface->CallBuiltin("variable_global_get", { RValue("upgrade_list_binary") });
+	if (list.m_Kind != VALUE_ARRAY)
+		return false;
+	if (!AurieSuccess(g_ModuleInterface->GetArraySize(list, total)))
+		return false;
+	for (size_t index = 0; index < total; ++index)
+	{
+		RValue* entry = nullptr;
+		if (!AurieSuccess(g_ModuleInterface->GetArrayEntry(list, index, entry)) || !IsNumber(entry))
+			continue;
+		if (NumberOf(entry) > 0.0)
+			++owned;
+	}
+	return true;
+}
+
+static void UnlockTrinkets()
+{
+	if (g_ModuleInterface == nullptr)
+		return;
+	RValue list = g_ModuleInterface->CallBuiltin("variable_global_get", { RValue("upgrade_list_binary") });
+	if (list.m_Kind != VALUE_ARRAY)
+		return;
+	size_t size = 0;
+	if (!AurieSuccess(g_ModuleInterface->GetArraySize(list, size)))
+		return;
+	for (size_t index = 0; index < size; ++index)
+	{
+		RValue* entry = nullptr;
+		if (!AurieSuccess(g_ModuleInterface->GetArrayEntry(list, index, entry)) || !IsNumber(entry))
+			continue;
+		if (NumberOf(entry) <= 0.0)
+			SetNumber(entry, 1.0);
+	}
+}
+
+// The open map draws o_Map_Draw.map_array. Entering a room sets that cell to 2.
+static bool MapSystem(RValue& out)
+{
+	if (g_ModuleInterface == nullptr)
+		return false;
+	out = g_ModuleInterface->CallBuiltin("variable_global_get", { RValue("map_system") });
+	if (out.m_Kind != VALUE_REF)
+		return false;
+	const RValue exists = g_ModuleInterface->CallBuiltin("ds_exists", { out, RValue(1.0) });
+	return exists.m_Kind != VALUE_UNSET && exists.m_Kind != VALUE_UNDEFINED && exists.ToBoolean();
+}
+
+static bool FindMapDraw(double& out)
+{
+	if (g_ModuleInterface == nullptr)
+		return false;
+	static double objectIndex = -1.0;
+	if (objectIndex < 0.0)
+	{
+		const RValue index = g_ModuleInterface->CallBuiltin("asset_get_index", { RValue("o_Map_Draw") });
+		if (index.m_Kind == VALUE_UNSET || index.ToDouble() < 0.0)
+			return false;
+		objectIndex = index.ToDouble();
+	}
+	const RValue found = g_ModuleInterface->CallBuiltin("instance_find", { RValue(objectIndex), RValue(0.0) });
+	if (found.m_Kind == VALUE_UNSET || found.ToInt32() < 0)
+		return false;
+	out = found.ToDouble();
+	return true;
+}
+
+// Entering a room changes that cell from 1 to 2. 1 is the fog still on the map.
+static void RevealGrid(RValue& grid, int depth)
+{
+	if (g_ModuleInterface == nullptr || grid.m_Kind != VALUE_ARRAY || depth > 2)
+		return;
+	size_t size = 0;
+	if (!AurieSuccess(g_ModuleInterface->GetArraySize(grid, size)))
+		return;
+	for (size_t index = 0; index < size; ++index)
+	{
+		RValue* entry = nullptr;
+		if (!AurieSuccess(g_ModuleInterface->GetArrayEntry(grid, index, entry)) || entry == nullptr)
+			continue;
+		if (entry->m_Kind == VALUE_ARRAY)
+			RevealGrid(*entry, depth + 1);
+		else if (IsNumber(entry) && NumberOf(entry) == 1.0)
+			SetNumber(entry, 2.0);
+	}
+}
+
+static void CountGrid(RValue& grid, int depth, size_t& revealed, size_t& total)
+{
+	if (g_ModuleInterface == nullptr || grid.m_Kind != VALUE_ARRAY || depth > 2)
+		return;
+	size_t size = 0;
+	if (!AurieSuccess(g_ModuleInterface->GetArraySize(grid, size)))
+		return;
+	for (size_t index = 0; index < size; ++index)
+	{
+		RValue* entry = nullptr;
+		if (!AurieSuccess(g_ModuleInterface->GetArrayEntry(grid, index, entry)) || entry == nullptr)
+			continue;
+		if (entry->m_Kind == VALUE_ARRAY)
+			CountGrid(*entry, depth + 1, revealed, total);
+		else if (IsNumber(entry))
+		{
+			const double number = NumberOf(entry);
+			if (number == 1.0 || number == 2.0)
+				++total;
+			if (number == 2.0)
+				++revealed;
+		}
+	}
+}
+
+static std::string RevealedString(const char* text)
+{
+	std::string copy = text != nullptr ? text : "";
+	for (char& cell : copy)
+	{
+		if (cell == '1')
+			cell = '2';
+	}
+	return copy;
+}
+
+static bool MapProgress(size_t& revealed, size_t& total)
+{
+	revealed = 0;
+	total = 0;
+	RValue system;
+	if (!MapSystem(system))
+		return false;
+	RValue grid = g_ModuleInterface->CallBuiltin("ds_map_find_value", { system, RValue("map_array") });
+	CountGrid(grid, 0, revealed, total);
+	return total > 0;
+}
+
+static void UnlockMap()
+{
+	RValue system;
+	if (!MapSystem(system))
+		return;
+	RValue map = g_ModuleInterface->CallBuiltin("ds_map_find_value", { system, RValue("map") });
+	if (map.m_Kind == VALUE_STRING && map.ToCString() != nullptr)
+	{
+		const std::string text = RevealedString(map.ToCString());
+		g_ModuleInterface->CallBuiltin("ds_map_replace", { system, RValue("map"), RValue(text.c_str()) });
+	}
+	RValue grid = g_ModuleInterface->CallBuiltin("ds_map_find_value", { system, RValue("map_array") });
+	RevealGrid(grid, 0);
+
+	double draw = -1.0;
+	if (!FindMapDraw(draw))
+		return;
+	const RValue id(draw);
+	RValue liveGrid = g_ModuleInterface->CallBuiltin("variable_instance_get", { id, RValue("map_array") });
+	RevealGrid(liveGrid, 0);
+	RValue liveCopy = g_ModuleInterface->CallBuiltin("variable_instance_get", { id, RValue("array_var") });
+	RevealGrid(liveCopy, 0);
+	RValue liveString = g_ModuleInterface->CallBuiltin("variable_instance_get", { id, RValue("map_string") });
+	if (liveString.m_Kind == VALUE_STRING && liveString.ToCString() != nullptr)
+	{
+		const std::string text = RevealedString(liveString.ToCString());
+		g_ModuleInterface->CallBuiltin(
+			"variable_instance_set",
+			{ id, RValue("map_string"), RValue(text.c_str()) });
+	}
+	g_ModuleInterface->CallBuiltin("variable_instance_set", { id, RValue("redraw"), RValue(1.0) });
+}
+
 static void FlyBindLabel(char* out, size_t count)
 {
 	if (g_FlyBindKind != 1)
@@ -654,7 +833,14 @@ static void DrawMenu()
 	const bool focused = GameHasFocus();
 	const bool down = tilde || insert;
 	if (down && !wasDown && focused)
+	{
 		g_MenuOpen = !g_MenuOpen;
+		if (!g_MenuOpen)
+		{
+			g_ConfirmUnlock = false;
+			g_ConfirmMap = false;
+		}
+	}
 	wasDown = down;
 	PollFlyBind(focused);
 
@@ -832,6 +1018,83 @@ static void DrawMenu()
 				ImGui::TextDisabled("waiting");
 			if (ImGui::Button("Add 5000 Currency##cheat", ImVec2(-1.0f, 0.0f)) && haveCurrency)
 				AddCurrency(5000.0);
+
+			size_t ownedTrinkets = 0;
+			size_t totalTrinkets = 0;
+			const bool haveTrinkets = TrinketProgress(ownedTrinkets, totalTrinkets);
+			ImGui::TextUnformatted("Trinket count");
+			ImGui::SameLine();
+			if (haveTrinkets)
+				ImGui::TextDisabled("%zu / %zu", ownedTrinkets, totalTrinkets);
+			else
+				ImGui::TextDisabled("waiting");
+			if (ImGui::Button("Unlock All Trinkets##cheat", ImVec2(-1.0f, 0.0f)) && haveTrinkets)
+				g_ConfirmUnlock = true;
+			if (g_ConfirmUnlock)
+				ImGui::OpenPopup("Unlock all trinkets?##modal");
+			ImVec2 center(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f);
+			ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+			if (ImGui::BeginPopupModal("Unlock all trinkets?##modal", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove))
+			{
+				ImGui::TextUnformatted("Mark every missing trinket as found?");
+				ImGui::TextDisabled("This is written into your save.");
+				ImGui::Spacing();
+				if (ImGui::IsWindowAppearing())
+					ImGui::SetKeyboardFocusHere();
+				if (ImGui::Button("Cancel##unlock", ImVec2(120.0f, 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_Escape))
+				{
+					g_ConfirmUnlock = false;
+					ImGui::CloseCurrentPopup();
+				}
+				ImGui::SameLine();
+				ImGui::PushStyleColor(ImGuiCol_Button, accent);
+				if (ImGui::Button("Unlock##unlock", ImVec2(120.0f, 0.0f)))
+				{
+					UnlockTrinkets();
+					g_ConfirmUnlock = false;
+					ImGui::CloseCurrentPopup();
+				}
+				ImGui::PopStyleColor();
+				ImGui::EndPopup();
+			}
+
+			size_t revealedMap = 0;
+			size_t mapCells = 0;
+			const bool haveMap = MapProgress(revealedMap, mapCells);
+			ImGui::TextUnformatted("Map");
+			ImGui::SameLine();
+			if (haveMap)
+				ImGui::TextDisabled("%zu / %zu", revealedMap, mapCells);
+			else
+				ImGui::TextDisabled("waiting");
+			if (ImGui::Button("Unlock Entire Map##cheat", ImVec2(-1.0f, 0.0f)) && haveMap)
+				g_ConfirmMap = true;
+			if (g_ConfirmMap)
+				ImGui::OpenPopup("Unlock the whole map?##modal");
+			ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+			if (ImGui::BeginPopupModal("Unlock the whole map?##modal", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove))
+			{
+				ImGui::TextUnformatted("Remove fog from the whole map?");
+				ImGui::TextDisabled("Have the map open. Save in game to keep it.");
+				ImGui::Spacing();
+				if (ImGui::IsWindowAppearing())
+					ImGui::SetKeyboardFocusHere();
+				if (ImGui::Button("Cancel##map", ImVec2(120.0f, 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_Escape))
+				{
+					g_ConfirmMap = false;
+					ImGui::CloseCurrentPopup();
+				}
+				ImGui::SameLine();
+				ImGui::PushStyleColor(ImGuiCol_Button, accent);
+				if (ImGui::Button("Unlock##map", ImVec2(120.0f, 0.0f)))
+				{
+					UnlockMap();
+					g_ConfirmMap = false;
+					ImGui::CloseCurrentPopup();
+				}
+				ImGui::PopStyleColor();
+				ImGui::EndPopup();
+			}
 		}
 	}
 	else if (ImGui::CollapsingHeader("Window##section", ImGuiTreeNodeFlags_DefaultOpen))

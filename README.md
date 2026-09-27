@@ -4,7 +4,7 @@
 
 A small menu for the Windows Steam version of Well Dweller. Press Insert or ~ while the game window is in front. The menu sits on the right.
 
-It is meant for playing on hard without the stops: health, stamina, hover, bubble fly, the vessel throw, shop currency, and trinket equip costs.
+It is meant for playing on hard without the stops: health, stamina, hover, bubble fly, the vessel throw, shop currency, trinket equip costs, all trinkets, and map fog.
 
 ## Cheats
 
@@ -15,10 +15,12 @@ It is meant for playing on hard without the stops: health, stamina, hover, bubbl
 - **Infinite Vessel.** The flaming vessel meter stays full.
 - **Free Trinket Costs.** Trinkets you have already found cost 0 points to equip. You still find them yourself. Turn it off to get the normal costs back.
 - **Add 5000 Currency.** Adds 5000 of the white-diamond shop currency.
+- **Unlock All Trinkets.** Asks you to confirm. Unlocks every missing trinket. Trinkets you already upgraded stay at that level.
+- **Unlock Entire Map.** Asks you to confirm. Open the map first. Fogged rooms are marked explored, and rooms you have already explored stay as they are. Save in the game if you want it to stay after you leave.
 
 Toggles are saved in `well-mod/config.json`, next to `WellDweller.exe`. That file appears the first time you change a toggle. It is local and is not part of this repo.
 
-This does not unlock trinkets you have not found, and it does not raise your maximum health.
+It does not raise your maximum health. Free Trinket Costs does not find trinkets for you. Unlock All Trinkets does, and it asks first.
 
 ## Install
 
