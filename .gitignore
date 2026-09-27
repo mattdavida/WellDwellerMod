@@ -1,0 +1,27 @@
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.vcxproj.user
+
+# Build output
+build/
+loader/build/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+
+# Linker and compiler intermediates
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.iobj
+*.ipdb
+*.recipe
+*.tlog
+
+# Local toggle state, written next to the game
+config.json
