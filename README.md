@@ -4,8 +4,6 @@
 
 A small menu for the Windows Steam version of Well Dweller. Press Insert or ~ while the game window is in front. The menu sits on the right.
 
-It is meant for playing on hard without the stops: health, stamina, hover, bubble fly, the vessel throw, shop currency, trinket equip costs, all trinkets, and map fog.
-
 ## Cheats
 
 - **Infinite Health.** Health stays at your current maximum. The maximum is not raised.
