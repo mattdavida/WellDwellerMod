@@ -1,6 +1,6 @@
 Well Dweller Menu
 
-A small menu for the Windows Steam version of Well Dweller. Press Insert or ~ in game. The menu sits on the right.
+A small menu for the Windows Steam version of Well Dweller. Press Insert or ~ while the game window is in front. The menu sits on the right.
 
 It is meant for playing on hard without the stops: health, stamina, hover, bubble fly, the vessel throw, shop currency, and trinket equip costs.
 
@@ -10,7 +10,7 @@ Cheats
 - Infinite Hover. The mid-air hover meter stays full. It drains toward 40, so full is 0. The hover unlock is not turned on.
 - Infinite Fly. Turns the bubble-fly state on and off. While it is on you do not need a bubble. Turn it off to fall through platforms. A keyboard hotkey for it can be set in Settings. The up-fly unlock is not turned on.
 - Infinite Vessel. The flaming vessel meter stays full.
-- Free Trinket Costs. Trinkets you have already found cost 0 points to equip. You still find them yourself.
+- Free Trinket Costs. Trinkets you have already found cost 0 points to equip. You still find them yourself. Turn it off to get the normal costs back.
 - Add 5000 Currency. Adds 5000 of the white-diamond shop currency.
 
 Toggles are saved in well-mod/config.json, next to WellDweller.exe. That file appears the first time you change a toggle.
@@ -39,3 +39,6 @@ A game update can replace WellDweller.exe. These files stay next to it, so there
 If the menu never appears, version.dll is not in the same folder as WellDweller.exe.
 
 This does not unlock trinkets you have not found, and it does not raise your maximum health.
+
+License
+This mod is MIT licensed. Aurie and YYToolkit are AGPL-3.0; source links above.

@@ -2,7 +2,7 @@
 
 ![Well Dweller menu open](GithubAssets/wd_hero.png)
 
-A small menu for the Windows Steam version of Well Dweller. Press Insert or ~ in game. The menu sits on the right.
+A small menu for the Windows Steam version of Well Dweller. Press Insert or ~ while the game window is in front. The menu sits on the right.
 
 It is meant for playing on hard without the stops: health, stamina, hover, bubble fly, the vessel throw, shop currency, and trinket equip costs.
 
@@ -13,7 +13,7 @@ It is meant for playing on hard without the stops: health, stamina, hover, bubbl
 - **Infinite Hover.** The mid-air hover meter stays full. It drains toward 40, so full is 0. The hover unlock is not turned on.
 - **Infinite Fly.** Turns the bubble-fly state on and off. While it is on you do not need a bubble. Turn it off to fall through platforms. A keyboard hotkey for it can be set in Settings. The up-fly unlock is not turned on.
 - **Infinite Vessel.** The flaming vessel meter stays full.
-- **Free Trinket Costs.** Trinkets you have already found cost 0 points to equip. You still find them yourself.
+- **Free Trinket Costs.** Trinkets you have already found cost 0 points to equip. You still find them yourself. Turn it off to get the normal costs back.
 - **Add 5000 Currency.** Adds 5000 of the white-diamond shop currency.
 
 Toggles are saved in `well-mod/config.json`, next to `WellDweller.exe`. That file appears the first time you change a toggle. It is local and is not part of this repo.
@@ -52,3 +52,7 @@ This folder is meant to live as `well-mod` next to `WellDweller.exe`. Visual Stu
 - `loader\version.vcxproj` builds `version.dll` next to the exe
 
 Close the game before building. The game locks those DLLs while it is running.
+
+## License
+
+MIT. The download also includes Aurie and YYToolkit, which are AGPL-3.0. See `THIRD_PARTY_NOTICES.md`.

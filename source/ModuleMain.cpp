@@ -16,6 +16,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <vector>
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
 
@@ -145,6 +146,18 @@ static bool ConfigPath(wchar_t* path, size_t count)
 	return true;
 }
 
+// The release zip has no well-mod folder, so create it before the first save.
+static void EnsureConfigFolder(const wchar_t* configPath)
+{
+	wchar_t folder[MAX_PATH]{};
+	wcscpy_s(folder, configPath);
+	wchar_t* slash = wcsrchr(folder, L'\\');
+	if (slash == nullptr)
+		return;
+	*slash = L'\0';
+	CreateDirectoryW(folder, nullptr);
+}
+
 static const char* JsonBoolAfter(const char* text, const char* key)
 {
 	char pattern[64]{};
@@ -180,6 +193,8 @@ static bool ParseJsonInt(const char* text, int& out)
 	int value = 0;
 	while (*text >= '0' && *text <= '9')
 	{
+		if (value > 100000)
+			return false;
 		value = value * 10 + (*text - '0');
 		++text;
 	}
@@ -215,6 +230,7 @@ static void SaveConfig()
 		g_FreeTrinkets ? "true" : "false",
 		g_FlyBindKind,
 		g_FlyBindCode);
+	EnsureConfigFolder(path);
 	const HANDLE file = CreateFileW(path, GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
 	if (file == INVALID_HANDLE_VALUE)
 	{
@@ -328,19 +344,34 @@ static void WriteGlobalReal(const char* name, double value)
 	g_ModuleInterface->CallBuiltin("variable_global_set", { RValue(name), RValue(value) });
 }
 
+// The oPlayer object index never changes during a run, so look it up once.
+static bool FindPlayer(int& out)
+{
+	static double objectIndex = -1.0;
+	if (objectIndex < 0.0)
+	{
+		const RValue index = g_ModuleInterface->CallBuiltin("asset_get_index", { RValue("oPlayer") });
+		if (index.m_Kind == VALUE_UNSET || index.ToDouble() < 0.0)
+			return false;
+		objectIndex = index.ToDouble();
+	}
+	const RValue found = g_ModuleInterface->CallBuiltin("instance_find", { RValue(objectIndex), RValue(0.0) });
+	if (found.m_Kind == VALUE_UNSET || found.ToInt32() < 0)
+		return false;
+	out = found.ToInt32();
+	return true;
+}
+
 static bool ReadPlayerReal(const char* name, double& out)
 {
 	if (g_ModuleInterface == nullptr)
 		return false;
-	const RValue objectIndex = g_ModuleInterface->CallBuiltin("asset_get_index", { RValue("oPlayer") });
-	if (objectIndex.m_Kind == VALUE_UNSET || objectIndex.ToDouble() < 0.0)
-		return false;
-	const RValue found = g_ModuleInterface->CallBuiltin("instance_find", { objectIndex, RValue(0.0) });
-	if (found.m_Kind == VALUE_UNSET || found.ToInt32() < 0)
+	int player = -1;
+	if (!FindPlayer(player))
 		return false;
 	const RValue value = g_ModuleInterface->CallBuiltin(
 		"variable_instance_get",
-		{ RValue(static_cast<double>(found.ToInt32())), RValue(name) });
+		{ RValue(static_cast<double>(player)), RValue(name) });
 	if (value.m_Kind == VALUE_UNDEFINED || value.m_Kind == VALUE_UNSET)
 		return false;
 	out = value.ToDouble();
@@ -351,25 +382,23 @@ static void WritePlayerReal(const char* name, double value)
 {
 	if (g_ModuleInterface == nullptr)
 		return;
-	const RValue objectIndex = g_ModuleInterface->CallBuiltin("asset_get_index", { RValue("oPlayer") });
-	if (objectIndex.m_Kind == VALUE_UNSET || objectIndex.ToDouble() < 0.0)
-		return;
-	const RValue found = g_ModuleInterface->CallBuiltin("instance_find", { objectIndex, RValue(0.0) });
-	if (found.m_Kind == VALUE_UNSET || found.ToInt32() < 0)
+	int player = -1;
+	if (!FindPlayer(player))
 		return;
 	g_ModuleInterface->CallBuiltin(
 		"variable_instance_set",
-		{ RValue(static_cast<double>(found.ToInt32())), RValue(name), RValue(value) });
+		{ RValue(static_cast<double>(player)), RValue(name), RValue(value) });
 }
 
 static void ApplyHealth()
 {
 	if (!g_InfiniteHealth)
 		return;
-	double cap = 15.0;
-	ReadGlobalReal("player_max_health", cap);
-	if (cap <= 0.0)
-		cap = 15.0;
+	// Only write when the game has a real maximum, so the cap is never raised
+	// and no globals are created before the game sets them up.
+	double cap = 0.0;
+	if (!ReadGlobalReal("player_max_health", cap) || cap <= 0.0)
+		return;
 	WriteGlobalReal("player_health", cap);
 	WriteGlobalReal("health_meter", 1.0);
 }
@@ -378,10 +407,9 @@ static void ApplyVessel()
 {
 	if (!g_InfiniteVessel)
 		return;
-	double cap = 8.0;
-	ReadGlobalReal("hit_bar_max", cap);
-	if (cap <= 0.0)
-		cap = 8.0;
+	double cap = 0.0;
+	if (!ReadGlobalReal("hit_bar_max", cap) || cap <= 0.0)
+		return;
 	WriteGlobalReal("hit_bar", cap);
 }
 
@@ -428,25 +456,63 @@ static void ApplyFly()
 	g_FlyHeld = false;
 }
 
-static void ZeroNumber(RValue* value)
+// Original trinket costs, in the order the cost walk visits them. Kept so the
+// costs come back when Free Trinket Costs is turned off.
+static std::vector<double> g_TrinketOriginals;
+static bool g_TrinketsZeroed = false;
+
+static bool IsNumber(const RValue* value)
 {
-	if (value == nullptr)
-		return;
-	if (value->m_Kind == VALUE_REAL)
-		value->m_Real = 0.0;
-	else if (value->m_Kind == VALUE_INT32)
-		value->m_i32 = 0;
-	else if (value->m_Kind == VALUE_INT64)
-		value->m_i64 = 0;
+	return value != nullptr &&
+		(value->m_Kind == VALUE_REAL || value->m_Kind == VALUE_INT32 || value->m_Kind == VALUE_INT64);
 }
 
-static void ZeroCostValue(RValue* value, int depth)
+static double NumberOf(const RValue* value)
+{
+	if (value->m_Kind == VALUE_INT32)
+		return static_cast<double>(value->m_i32);
+	if (value->m_Kind == VALUE_INT64)
+		return static_cast<double>(value->m_i64);
+	return value->m_Real;
+}
+
+static void SetNumber(RValue* value, double number)
+{
+	if (value->m_Kind == VALUE_REAL)
+		value->m_Real = number;
+	else if (value->m_Kind == VALUE_INT32)
+		value->m_i32 = static_cast<int32_t>(number);
+	else if (value->m_Kind == VALUE_INT64)
+		value->m_i64 = static_cast<int64_t>(number);
+}
+
+// zero == true: remember each nonzero cost, then set it to 0.
+// zero == false: put the remembered costs back.
+static void VisitCost(RValue* value, bool zero, size_t& slot)
+{
+	if (!IsNumber(value))
+		return;
+	if (slot >= g_TrinketOriginals.size())
+		g_TrinketOriginals.resize(slot + 1, 0.0);
+	if (zero)
+	{
+		const double current = NumberOf(value);
+		if (current != 0.0)
+			g_TrinketOriginals[slot] = current;
+		SetNumber(value, 0.0);
+	}
+	else if (g_TrinketOriginals[slot] != 0.0)
+		SetNumber(value, g_TrinketOriginals[slot]);
+	++slot;
+}
+
+static void WalkCosts(RValue* value, int depth, bool zero, size_t& slot)
 {
 	if (value == nullptr || depth > 2 || g_ModuleInterface == nullptr)
 		return;
-	if (value->m_Kind == VALUE_REAL || value->m_Kind == VALUE_INT32 || value->m_Kind == VALUE_INT64)
+	if (IsNumber(value))
 	{
-		ZeroNumber(value);
+		VisitCost(value, zero, slot);
 		return;
 	}
 	if (value->m_Kind == VALUE_ARRAY)
@@ -459,7 +525,7 @@ static void ZeroCostValue(RValue* value, int depth)
 			RValue* entry = nullptr;
 			if (!AurieSuccess(g_ModuleInterface->GetArrayEntry(*value, index, entry)))
 				continue;
-			ZeroCostValue(entry, depth + 1);
+			WalkCosts(entry, depth + 1, zero, slot);
 		}
 		return;
 	}
@@ -467,18 +533,22 @@ static void ZeroCostValue(RValue* value, int depth)
 	{
 		RValue* cost = nullptr;
 		if (AurieSuccess(g_ModuleInterface->GetInstanceMember(*value, "cost", cost)))
-			ZeroNumber(cost);
+			VisitCost(cost, zero, slot);
 	}
 }
 
 static void ApplyTrinkets()
 {
-	if (!g_FreeTrinkets || g_ModuleInterface == nullptr)
+	if (g_ModuleInterface == nullptr)
+		return;
+	if (!g_FreeTrinkets && !g_TrinketsZeroed)
 		return;
 	RValue costs = g_ModuleInterface->CallBuiltin("variable_global_get", { RValue("upgrade_cost") });
 	if (costs.m_Kind != VALUE_ARRAY)
 		return;
-	ZeroCostValue(&costs, 0);
+	size_t slot = 0;
+	WalkCosts(&costs, 0, g_FreeTrinkets, slot);
+	g_TrinketsZeroed = g_FreeTrinkets;
 }
 
 static void AddCurrency(double amount)
@@ -522,7 +592,14 @@ static void FlyBindLabel(char* out, size_t count)
 	sprintf_s(out, count, "Key %d", g_FlyBindCode);
 }
 
-static void PollFlyBind()
+// GetAsyncKeyState sees the whole system, so only act on keys while the game
+// window is in front. Otherwise typing ~ in another app would open the menu.
+static bool GameHasFocus()
+{
+	return g_Window != nullptr && GetForegroundWindow() == g_Window;
+}
+
+static void PollFlyBind(bool focused)
 {
 	static bool keyWas[256]{};
 	static bool primed = false;
@@ -543,7 +620,7 @@ static void PollFlyBind()
 		primed = true;
 		return;
 	}
-	if (hitCode == 0)
+	if (hitCode == 0 || !focused)
 		return;
 	if (g_FlyBindListening)
 	{
@@ -552,6 +629,9 @@ static void PollFlyBind()
 			g_FlyBindListening = false;
 			return;
 		}
+		// Insert and ~ open the menu, so they can't be the fly key.
+		if (hitCode == VK_INSERT || hitCode == VK_OEM_3)
+			return;
 		g_FlyBindKind = 1;
 		g_FlyBindCode = hitCode;
 		g_FlyBindListening = false;
@@ -571,11 +651,12 @@ static void DrawMenu()
 	const bool tilde = (GetAsyncKeyState(VK_OEM_3) & 0x8000) != 0;
 	const bool insert = (GetAsyncKeyState(VK_INSERT) & 0x8000) != 0;
 	static bool wasDown = false;
+	const bool focused = GameHasFocus();
 	const bool down = tilde || insert;
-	if (down && !wasDown)
+	if (down && !wasDown && focused)
 		g_MenuOpen = !g_MenuOpen;
 	wasDown = down;
-	PollFlyBind();
+	PollFlyBind(focused);
 
 	UpdateCursorLock();
 	if (!g_MenuOpen || !g_ImGuiReady)
@@ -904,6 +985,11 @@ static void WndProcCallback(FWWndProc& WindowContext)
 	const UINT msg = std::get<1>(args);
 	const WPARAM wp = std::get<2>(args);
 	const LPARAM lp = std::get<3>(args);
+
+	// Once the window is subclassed, MenuWndProc sees every message first and
+	// already hands it to ImGui. Stop here so ImGui does not get it twice.
+	if (g_PreviousWnd != nullptr)
+		return;
 
 	const bool toggle = msg == WM_KEYDOWN && (wp == VK_OEM_3 || wp == VK_INSERT);
 	if (toggle)
