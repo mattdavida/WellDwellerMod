@@ -1,4 +1,4 @@
-# Well Dweller Menu
+# Well Dweller Menu (Mod & Cheats)
 
 ![Well Dweller menu open](GithubAssets/wd_hero.png)
 
